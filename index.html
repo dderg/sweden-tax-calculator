@@ -60,7 +60,8 @@
       <li>Dividend room ("gränsbelopp", 2026 rules): base 322,400/yr + 50% × (salary − 644,800), unused room saved. Dividends within room: 20% tax.</li>
       <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights). The 90-IBB ceiling is ignored.</li>
       <li>Tax deferral fund (periodiseringsfond): 25% of this year's result set aside; reversed in future years to absorb losses from salary paid with no profit; any rest is taxed at the end. Dividends only from taxed free equity (cash minus fund).</li>
-      <li>Anything still in the company after the last year is paid out in one extra year with no salary (in-room 20%, rest as income).</li>
+      <li>Anything still in the company after the last year is paid out in one extra year with no salary (in-room 20%, rest as income). "Dissolve now" = the same, done right after this year (liquidation proceeds follow the same 3:12 split).</li>
+      <li>"Dormant then liquidate" (trädabolag, 4:25 rule from 2026): after this year you stop all activity and take no salary for 4 full calendar years, only in-room dividends (room keeps accruing 322,400/yr). Year 5 the shares are unqualified and everything left is taxed at a flat 25%.</li>
     </ul>
   </details>
   <div class="warn">Sanity-check with your accountant: (1) above-room dividends taxed as income without employer contributions, (2) the 50%-of-salary room rule with a single 644,800 deduction, (3) that low salary years are acceptable for your pension/benefits (use the minimum-salary slider).</div>
@@ -82,6 +83,7 @@ const P = {
   loneAndel:  {v:50,    l:"Salary-based room % of salary above deduction"},
   slr:        {v:1.96,  l:"Govt loan rate % (fund notional income)"},
   usePfond:   {v:1,     l:"Use tax deferral fund (1/0)"},
+  liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
 };
 const fmt = n => Math.round(n).toLocaleString("sv-SE");
 const ag = () => 1 + P.agavg.v/100;
@@ -123,6 +125,22 @@ function run(S, F, G, I){
   }
   return st;
 }
+// Dormant plan: salary S this year, then 4 idle calendar years (in-room dividends only), then liquidate at 25%.
+function runDormant(S, I){
+  const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
+  year(st, S, 0, I.profit, "This year");
+  for (let k=1;k<=4;k++) year(st, 0, 0, 0, "Dormant year "+k);
+  const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
+  const net = st.cash*(1-P.liqTax.v/100);
+  st.rows.push({label:"Liquidation (25%)", sal:0, divIn:0, divOver:st.cash, corpTax:endTax, fundDelta:0, cashEnd:0, net});
+  st.net += net; st.cash = 0;
+  return st;
+}
+function bestOf(f, I){ // optimize this-year salary for a plan function
+  let best=null; const maxS=Math.max(I.minSal, I.profit/ag());
+  for (let S=I.minSal; S<=maxS; S+=5000){ const r=f(S,I); if(!best||r.net>best.net) best=r; }
+  return best;
+}
 
 // Best future policy for a given this-year salary S.
 function bestFuture(S, I){
@@ -159,12 +177,18 @@ function render(){
   const bestR = run(best.S,best.F,best.G,I), capR = run(capS,capB.F,capB.G,I);
   const d = bestR.net - capR.net;
   const near = pts.filter(p=>p[1]>=bestR.net-5000).map(p=>p[0]);
+  const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
+  const dormR = bestOf(runDormant, I);
+  const alts = [["Keep company, optimal plan above", bestR.net],["Dissolve now (after this year's salary)", nowR.net],["Dormant 4 years, then liquidate at 25%", dormR.net]];
   headline.innerHTML = `
     <div class="big">Take ${fmt(best.S)} kr salary this year → total ${fmt(bestR.net)} kr in your pocket</div>
     <div>Plus dividends within room this year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Future years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
     <div>Best plan with exactly the 660,400 cap salary this year: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span>.</div>
-    <div class="note">Any salary this year between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} is within 5,000 kr of the optimum.</div>`;
-  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Cap-salary plan (salary ${fmt(capS)} this year, future re-optimized)`, capR);
+    <div class="note">Any salary this year between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} is within 5,000 kr of the optimum.</div>
+    <h2 style="margin-top:12px">Retiring? Keep vs dissolve</h2>
+    <table>${alts.map(([l,n])=>`<tr><td>${l}</td><td>${fmt(n)}</td><td class="${n-bestR.net>=0?'pos':'neg'}">${n-bestR.net>=0?'+':''}${fmt(n-bestR.net)}</td></tr>`).join("")}</table>`;
+  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Cap-salary plan (salary ${fmt(capS)} this year, future re-optimized)`, capR)
+    + table(`Dissolve now (salary ${fmt(nowR.rows[0].sal)} this year)`, nowR) + table(`Dormant then liquidate (salary ${fmt(dormR.rows[0].sal)} this year)`, dormR);
 }
 
 function table(title, r){
