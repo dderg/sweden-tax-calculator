@@ -56,7 +56,7 @@
     <ul>
       <li>Personal income tax = municipal × (gross − basic deduction) − earned-income credit + 20% × (gross − threshold, if above).</li>
       <li>Dividend room ("gränsbelopp", 2026 rules): base 322,400/yr + 50% × (salary − 644,800), unused room saved. Dividends within room: 20% tax.</li>
-      <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights). The 90-IBB ceiling is ignored.</li>
+      <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights), up to a ceiling of 90 IBB (7,254,000 kr) per year; anything above the ceiling is capital income at 30%.</li>
       <li>Tax deferral fund (periodiseringsfond): 25% of this year's result set aside; reversed in future years to absorb losses from salary paid with no profit; any rest is taxed at the end. Dividends only from taxed free equity (cash minus fund).</li>
       <li>Anything still in the company after the last year is paid out in one extra year with no salary (in-room 20%, rest as income). "Dissolve now" = the same, done right after this year (liquidation proceeds follow the same 3:12 split).</li>
       <li>"Dormant then liquidate" (trädabolag, 4:25 rule from 2026): after this year you stop all activity and take no salary for 4 full calendar years, only in-room dividends (room keeps accruing 322,400/yr). Year 5 the shares are unqualified and everything left is taxed at a flat 25%.</li>
@@ -84,6 +84,8 @@ const P = {
   liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
   ret:        {v:5,     l:"Expected investment return %/yr"},
   iskTax:     {v:0.888, l:"ISK tax %/yr of capital"},
+  overCap:    {v:7254000,l:"Ceiling kr/yr for over-room dividends as income (90 IBB)"},
+  capTax:     {v:30,    l:"Capital tax % above that ceiling"},
 };
 const fmt = n => Math.round(n).toLocaleString("sv-SE");
 const ag = () => 1 + P.agavg.v/100;
@@ -113,7 +115,8 @@ function year(st, sal, over, profit, label){
   const divIn = Math.min(st.room, free);
   const divOver = Math.min(over, free - divIn);
   st.cash -= divIn + divOver; st.room -= divIn;
-  const net = sal + divOver - personalTax(sal, divOver) + divIn*(1-P.divTax.v/100);
+  const asIncome = Math.min(divOver, P.overCap.v), asCapital = divOver - asIncome;
+  const net = sal + asIncome - personalTax(sal, asIncome) + asCapital*(1-P.capTax.v/100) + divIn*(1-P.divTax.v/100);
   st.net += net;
   st.bank = st.bank*(1+(P.ret.v-P.iskTax.v)/100) + net; st.t++;
   st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net, bank:st.bank});
