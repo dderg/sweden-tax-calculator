@@ -46,6 +46,12 @@
   <div class="ctl"><label>Minimum salary per year (for pension/sickness benefits)</label>
     <input type="range" id="minSal" min="0" max="660400" step="10000" value="0">
     <input type="number" id="minSal_n" step="10000" value="0"></div>
+  <div class="ctl"><label>Owners (1 = you, 2 = you + spouse 50/50, same salary each)</label>
+    <input type="range" id="owners" min="1" max="2" step="1" value="1">
+    <input type="number" id="owners_n" min="1" max="2" step="1" value="1"></div>
+  <div class="ctl"><label>Total owner salaries paid last year (kr, for this year's wage-based room)</label>
+    <input type="range" id="prevPay" min="0" max="3000000" step="10000" value="0">
+    <input type="number" id="prevPay_n" step="10000" value="0"></div>
   <details><summary>Tax parameters (2026, Värmdö)</summary><div class="params" id="params"></div></details>
 </div>
 
@@ -55,8 +61,9 @@
   <details><summary>Model notes</summary>
     <ul>
       <li>Personal income tax = municipal × (gross − basic deduction) − earned-income credit + 20% × (gross − threshold, if above).</li>
-      <li>Dividend room ("gränsbelopp", 2026 rules): base 322,400/yr + 50% × (salary − 644,800), unused room saved. Dividends within room: 20% tax.</li>
-      <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights), up to a ceiling of 90 IBB (7,254,000 kr) per year; anything above the ceiling is capital income at 30%.</li>
+      <li>Dividend room ("gränsbelopp", 2026 rules, per Skatteverket): base 322,400/yr per company (split between owners) + 50% × (last year's owner payroll − 644,800; deducted once — spouses compute jointly), unused room saved without uplift. Dividends within room: 20% tax.</li>
+      <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights), split between owners, up to a ceiling of 90 IBB (7,254,000 kr) per person and year; anything above the ceiling is capital income at 30%.</li>
+      <li>With 2 owners (spouses, 50/50) both take the same salary; each has their own brackets and earned-income credit.</li>
       <li>Tax deferral fund (periodiseringsfond): 25% of this year's result set aside; reversed in future years to absorb losses from salary paid with no profit; any rest is taxed at the end. Dividends only from taxed free equity (cash minus fund).</li>
       <li>Anything still in the company after the last year is paid out in one extra year with no salary (in-room 20%, rest as income). "Dissolve now" = the same, done right after this year (liquidation proceeds follow the same 3:12 split).</li>
       <li>"Dormant then liquidate" (trädabolag, 4:25 rule from 2026): after this year you stop all activity and take no salary for 4 full calendar years, only in-room dividends (room keeps accruing 322,400/yr). Year 5 the shares are unqualified and everything left is taxed at a flat 25%.</li>
@@ -99,27 +106,31 @@ function personalTax(sal, other=0){
   return muni - credit + P.stateRate.v/100 * Math.max(0, gross - P.brytpunkt.v);
 }
 
-// One year: pay salary `sal`, max in-room dividend, then `over` above-room dividend (limited by cash).
+// One year: each of n owners takes salary `sal`; max in-room dividend, then `over` above-room dividend (limited by cash), split between owners.
 function year(st, sal, over, profit, label){
+  const n = st.n;
   st.cash *= 1+(P.ret.v-P.iskTax.v)/100; // company cash in a KF: same return, same flat schablon tax, no corporate tax on gains
-  const cost = sal*ag();
+  const cost = sal*n*ag();
   let result = profit - cost + st.fund*P.slr.v/100;
   let alloc=0, rev=0;
   if (result<0){ rev = Math.min(st.fund, -result); st.fund -= rev; result += rev; }
   else if (P.usePfond.v && profit>0){ alloc = result*0.25; result -= alloc; st.fund += alloc; }
   const corpTax = Math.max(0,result)*P.corp.v/100;
   st.cash += profit - cost - corpTax;
-  st.room += P.grundbelopp.v + Math.max(0, sal - P.loneAvdrag.v)*P.loneAndel.v/100;
+  // room: grundbelopp shared by the company; wage-based part on LAST year's payroll, 8 IBB deducted once (spouses compute jointly)
+  st.room += P.grundbelopp.v + Math.max(0, st.prevPay - P.loneAvdrag.v)*P.loneAndel.v/100;
+  st.prevPay = sal*n;
   const free = Math.max(0, st.cash - st.fund);
   const divIn = Math.min(st.room, free);
   const divOver = Math.min(over, free - divIn);
   st.cash -= divIn + divOver; st.room -= divIn;
-  const asIncome = Math.min(divOver, P.overCap.v), asCapital = divOver - asIncome;
-  const net = sal + asIncome - personalTax(sal, asIncome) + asCapital*(1-P.capTax.v/100) + divIn*(1-P.divTax.v/100);
+  const perOver = divOver/n, asIncome = Math.min(perOver, P.overCap.v), asCapital = perOver - asIncome;
+  const net = n*(sal + asIncome - personalTax(sal, asIncome) + asCapital*(1-P.capTax.v/100)) + divIn*(1-P.divTax.v/100);
   st.net += net;
   st.bank = st.bank*g() + net; st.t++;
   st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net, bank:st.bank, t:st.t});
 }
+const fresh = I => ({cash:0, fund:0, room:I.room0, prevPay:I.prevPay, n:I.owners, net:0, bank:0, t:0, rows:[]});
 // Value in today's kr: ISK keeps growing after the plan ends, then everything is discounted back at the same net rate,
 // so the growth itself cancels and only the timing/tax differences between plans remain.
 const g = () => 1+(P.ret.v-P.iskTax.v)/100;
@@ -132,9 +143,9 @@ function finish(st){
 
 // Plan: salary S in each profitable year, F in each payout year; above-room dividend G every year; leftover dumped in an extra year.
 function run(S, F, G, I){
-  const st = {cash:0, fund:0, room:I.room0, net:0, bank:0, t:0, rows:[]};
+  const st = fresh(I);
   for (let k=1;k<=I.pyears;k++) year(st, S, G, I.profit, "Profit year "+k);
-  for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()), G, 0, "Payout year "+k);
+  for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()/st.n), G, 0, "Payout year "+k);
   if (st.cash>1){ // final clean-out: reverse fund, tax it, pay out everything with no salary
     const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
     year(st, 0, st.cash, 0, "Clean-out year");
@@ -144,7 +155,7 @@ function run(S, F, G, I){
 }
 // Dormant plan: salary S in profitable years, then 4 idle calendar years (in-room dividends only), then liquidate at 25%.
 function runDormant(S, I){
-  const st = {cash:0, fund:0, room:I.room0, net:0, bank:0, t:0, rows:[]};
+  const st = fresh(I);
   for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
   for (let k=1;k<=4;k++) year(st, 0, 0, 0, "Dormant year "+k);
   const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
@@ -155,7 +166,7 @@ function runDormant(S, I){
   return finish(st);
 }
 function bestOf(f, I){ // optimize this-year salary for a plan function
-  let best=null; const maxS=Math.max(I.minSal, I.profit/ag());
+  let best=null; const maxS=Math.max(I.minSal, I.profit/ag()/I.owners);
   for (let S=I.minSal; S<=maxS; S+=5000){ const r=f(S,I); if(!best||r.val>best.val) best=r; }
   return best;
 }
@@ -172,12 +183,12 @@ function bestFuture(S, I){
   return best;
 }
 
-function inputs(){ return { profit:profit.value*1e6, pyears:+pyears.value, years:+years.value, room0:+room0.value, minSal:+minSal.value }; }
+function inputs(){ return { profit:profit.value*1e6, pyears:+pyears.value, years:+years.value, room0:+room0.value, minSal:+minSal.value, owners:+owners.value, prevPay:+prevPay.value }; }
 
 function render(){
   const I = inputs();
   const cap = P.brytpunkt.v;
-  const maxS = Math.max(I.minSal, I.profit/ag());
+  const maxS = Math.max(I.minSal, I.profit/ag()/I.owners);
   const step = Math.max(10000, Math.round(maxS/30/10000)*10000);
   let best=null;
   const Ss = new Set([I.minSal, Math.min(cap,maxS), maxS]);
@@ -207,7 +218,7 @@ function render(){
 }
 
 function table(title, r){
-  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you, today's kr (sum for grouped years)</th><th>Cumulative</th></tr>` +
+  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary${r.n>1?" (each)":""}</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you${r.n>1?" both":""}, today's kr (sum for grouped years)</th><th>Cumulative</th></tr>` +
     collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.netPV)}</td><td>${fmt(y.cumPV)}</td></tr>`).join("") +
     `<tr><th>Total</th><td colspan="7"></td><th>${fmt(r.val)}</th></tr></table>`;
 }
@@ -223,7 +234,7 @@ function collapse(rows){
   return out.map(y=>({...y,label:y.count>1?`${y.label} … +${y.count-1} more (each)`:y.label}));
 }
 
-for (const id of ["profit","pyears","years","room0","minSal"]){
+for (const id of ["profit","pyears","years","room0","minSal","owners","prevPay"]){
   const r=document.getElementById(id), n=document.getElementById(id+"_n");
   r.addEventListener("input", ()=>{ n.value=r.value; schedule(); });
   n.addEventListener("input", ()=>{ r.value=n.value; schedule(); });
