@@ -92,8 +92,7 @@ const P = {
   slr:        {v:2.55,  l:"Govt loan rate % (fund notional income)"},
   usePfond:   {v:1,     l:"Use tax deferral fund (1/0)"},
   liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
-  ret:        {v:5,     l:"Expected investment return %/yr"},
-  iskTax:     {v:0.888, l:"ISK/KF schablon tax %/yr of capital"},
+  netRet:     {v:4,     l:"Net investment return %/yr (after ISK/KF schablon tax)"},
   overCap:    {v:7254000,l:"Ceiling kr/yr for over-room dividends as income (90 IBB)"},
   capTax:     {v:30,    l:"Capital tax % above that ceiling"},
 };
@@ -123,7 +122,7 @@ const pensionValue = sal => Math.min(sal, 8.07*P.ibb.v) * P.pensionVal.v/100;
 // One year: each of n owners takes salary `sal`; max in-room dividend, then `over` above-room dividend (limited by cash), split between owners.
 function year(st, sal, over, profit, label){
   const n = st.n;
-  st.cash *= 1+(P.ret.v-P.iskTax.v)/100; // company cash in a KF: same return, same flat schablon tax, no corporate tax on gains
+  st.cash *= g(); // company cash in a KF: compounds at the same net rate as your ISK
   const cost = sal*n*ag();
   let result = profit - cost + st.fund*P.slr.v/100;
   let alloc=0, rev=0;
@@ -147,7 +146,7 @@ function year(st, sal, over, profit, label){
 const fresh = I => ({cash:0, fund:0, room:I.room0, prevPay:I.prevPay, n:I.owners, net:0, bank:0, t:0, rows:[]});
 // Value in today's kr: ISK keeps growing after the plan ends, then everything is discounted back at the same net rate,
 // so the growth itself cancels and only the timing/tax differences between plans remain.
-const g = () => 1+(P.ret.v-P.iskTax.v)/100;
+const g = () => 1+P.netRet.v/100;
 function finish(st){
   st.val = st.bank/Math.pow(g(), st.t);
   let cum=0;
@@ -227,7 +226,7 @@ function render(){
     [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
     [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
   ];
-  detail.innerHTML = `<div class="note">All amounts in today's kr: your ISK and the company's KF both compound at ${P.ret.v}% minus ${P.iskTax.v}% schablon tax, and results are discounted back at the same rate, so growth cancels out and what remains is the effect of taxes and of money sitting in the company instead of your ISK. Ranked best first.</div>` +
+  detail.innerHTML = `<div class="note">All amounts in today's kr: your ISK and the company's KF both compound at the same net return (${P.netRet.v}%), and results are discounted back at that rate — growth cancels out, leaving only taxes and timing. The return still matters: fixed-kr buckets like the 322,400 room are worth less the further away they are. Ranked best first.</div>` +
     plans.map(([t,r])=>{ const dd=r.val-bestR.val; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.val)} kr${dd<0?` (${fmt(dd)})`:""}</span> <span class="note">— ${fmt(r.net)} kr nominal, ${r.t} years</span>`, r); }).join("");
 }
 

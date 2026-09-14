@@ -74,7 +74,7 @@ test("saved room carries forward without uplift", () => {
   near(st.room, 750000 + 322400, 1);
 });
 test("in-room dividend taxed 20%, limited by room and by free equity", () => {
-  P.usePfond.v = 0; P.ret.v = 0; P.iskTax.v = 0;
+  P.usePfond.v = 0; P.netRet.v = 0;
   const st = M.fresh(I({ profit: 0, room0: 1e6 })); st.cash = 200000;
   M.year(st, 0, 0, 0, "y");
   near(st.rows[0].divIn, 200000, 1);
@@ -106,7 +106,7 @@ test("corporate tax 20.6% on result after salary cost; employer contributions 31
   near(st.cash + st.rows[0].divIn, 1e6 - cost - (1e6 - cost) * 0.206, 1);
 });
 test("periodiseringsfond: 25% deferred, reversed against later loss, notional income at SLR", () => {
-  P.ret.v = 0; P.iskTax.v = 0; P.grundbelopp.v = 0;
+  P.netRet.v = 0; P.grundbelopp.v = 0;
   const st = M.fresh(I({ profit: 1e6 }));
   M.year(st, 0, 0, 1e6, "y1");
   near(st.fund, 250000, 1); near(st.rows[0].corpTax, 750000 * 0.206, 1);
@@ -120,8 +120,8 @@ test("periodiseringsfond off → no allocation", () => {
   const st = M.fresh(I()); M.year(st, 0, 0, 1e6, "y");
   expect(st.fund).toBe(0);
 });
-test("company cash compounds at return minus schablon tax (KF)", () => {
-  P.usePfond.v = 0; P.grundbelopp.v = 0; P.ret.v = 5; P.iskTax.v = 1;
+test("company cash compounds at the net return (KF)", () => {
+  P.usePfond.v = 0; P.grundbelopp.v = 0; P.netRet.v = 4;
   const st = M.fresh(I({ profit: 0 })); st.cash = 1e6;
   M.year(st, 0, 0, 0, "y");
   near(st.cash, 1.04e6, 1);
@@ -129,12 +129,12 @@ test("company cash compounds at return minus schablon tax (KF)", () => {
 
 // ---- plan-level invariants ----
 test("present value: at zero net return val == nominal net", () => {
-  P.ret.v = 0; P.iskTax.v = 0;
+  P.netRet.v = 0;
   const r = M.run(150000, 120000, 0, I());
   near(r.val, r.net, 1e-6);
 });
 test("present value is timing-neutral: paying out now vs one year later at the same tax gives equal value", () => {
-  P.usePfond.v = 0; P.grundbelopp.v = 0; P.ret.v = 7;
+  P.usePfond.v = 0; P.grundbelopp.v = 0; P.netRet.v = 7;
   const mk = () => { const st = M.fresh(I({ profit: 0, room0: 1e9 })); st.cash = 1e6; return st; };
   const a = mk(); M.year(a, 0, 0, 0, "y1"); M.finish(a);              // all out year 1 (room covers it)
   const b = mk(); b.room = 0; M.year(b, 0, 0, 0, "y1"); b.room = 1e9; M.year(b, 0, 0, 0, "y2"); M.finish(b); // all out year 2
@@ -157,7 +157,7 @@ test("salary cannot exceed what the company can pay", () => {
   near(r2.rows[1].sal * M.ag(), r2.rows[0].cashEnd, 1); // payout year capped by cash at start of year
 });
 test("dormant plan: no salary during 4 years, in-room dividends only, then 25% on remainder", () => {
-  P.ret.v = 0; P.iskTax.v = 0;
+  P.netRet.v = 0;
   const r = M.runDormant(0, I({ profit: 2e6 }));
   const dorm = r.rows.filter(y => y.label.startsWith("Dormant"));
   expect(dorm.length).toBe(4);
