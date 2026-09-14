@@ -125,7 +125,8 @@ function year(st, sal, over, profit, label){
 const g = () => 1+(P.ret.v-P.iskTax.v)/100;
 function finish(st){
   st.val = st.bank/Math.pow(g(), st.t);
-  for (const y of st.rows) y.bankPV = y.bank/Math.pow(g(), y.t);
+  let cum=0;
+  for (const y of st.rows){ y.netPV = y.net/Math.pow(g(), y.t); cum += y.netPV; y.cumPV = cum; }
   return st;
 }
 
@@ -204,9 +205,9 @@ function render(){
 }
 
 function table(title, r){
-  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you</th><th>Your ISK (today's kr)</th></tr>` +
-    collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.net)}</td><td>${fmt(y.bankPV)}</td></tr>`).join("") +
-    `<tr><th>Total</th><td colspan="6"></td><th>${fmt(r.net)}</th><th>${fmt(r.val)}</th></tr></table>`;
+  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you, today's kr (sum for grouped years)</th><th>Cumulative</th></tr>` +
+    collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.netPV)}</td><td>${fmt(y.cumPV)}</td></tr>`).join("") +
+    `<tr><th>Total</th><td colspan="7"></td><th>${fmt(r.val)}</th></tr></table>`;
 }
 
 // collapse runs of identical future years into one row
@@ -214,7 +215,7 @@ function collapse(rows){
   const out=[]; const same=(a,b)=>["sal","divIn","divOver","net"].every(k=>Math.abs(a[k]-b[k])<=2000);
   for (const y of rows){
     const p=out[out.length-1];
-    if (p && p.label.split(" ")[0]===y.label.split(" ")[0] && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; p.bankPV=y.bankPV; }
+    if (p && p.label.split(" ")[0]===y.label.split(" ")[0] && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; p.netPV+=y.netPV; p.cumPV=y.cumPV; }
     else out.push({...y,count:1});
   }
   return out.map(y=>({...y,label:y.count>1?`${y.label} … +${y.count-1} more (each)`:y.label}));
