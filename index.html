@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Swedish owner tax calculator (fåmansbolag, 2026 rules)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --a:#2563eb; --b:#dc2626; --bg:#f7f7f8; --card:#fff; }
+  body { font-family: system-ui, sans-serif; margin:0; background:var(--bg); color:#1a1a1a; }
+  .wrap { max-width:1200px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; } h2 { font-size:16px; margin:8px 0; }
+  .card { background:var(--card); border-radius:10px; padding:14px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .params { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:8px 16px; }
+  .params label { font-size:12px; color:#555; display:block; }
+  .params input { width:90px; }
+  .scenarios { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:900px){ .scenarios { grid-template-columns:1fr; } }
+  .year { border-top:1px solid #eee; padding:8px 0; }
+  .year .row { display:grid; grid-template-columns:70px 1fr 90px; gap:8px; align-items:center; font-size:13px; margin:2px 0; }
+  .year input[type=range]{ width:100%; }
+  .year input[type=number]{ width:85px; font-size:12px; }
+  .yhead { font-weight:600; font-size:13px; display:flex; justify-content:space-between; }
+  .yhead .net { color:#0a7a2f; font-weight:400; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { padding:3px 8px; text-align:right; border-bottom:1px solid #eee; }
+  th:first-child, td:first-child { text-align:left; }
+  .tot { font-weight:700; }
+  .warn { color:#b45309; font-size:12px; }
+  .diff { font-size:15px; font-weight:600; }
+  .pos { color:#0a7a2f; } .neg { color:#b91c1c; }
+  .sA h2 { color:var(--a); } .sB h2 { color:var(--b); }
+  button { font-size:12px; margin:2px; cursor:pointer; }
+  .note { font-size:12px; color:#666; }
+  details { font-size:12px; color:#555; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Fåmansbolag: salary vs dividends vs deferral (2026 rules, Värmdö)</h1>
+
+<div class="card">
+  <h2>Tax parameters</h2>
+  <div class="params" id="params"></div>
+  <details><summary>Model notes</summary>
+    <ul>
+      <li>Personal tax: kommunalskatt × (gross − grundavdrag) − jobbskatteavdrag + 20% × (gross − brytpunkt, if above). Approximation; tune grundavdrag/jobbskatteavdrag to match your slip.</li>
+      <li>Dividend room (new 2026 3:12): grundbelopp 322,400/yr + 50% × (your salary − 644,800), unused room saved (no uplift). Within room: 20% tax. Above room: taxed as extra salary income.</li>
+      <li>Periodiseringsfond: 25% of positive taxable result set aside each year (if enabled), auto-reversed against losses (e.g. salary > profit in a later year), force-reversed after 6 years and at horizon end. Schablonintäkt (SLR × fund) taxed yearly.</li>
+      <li>Losses carry forward inside the company. Dividends limited by company cash (warning if exceeded).</li>
+      <li>"Final value" = cash in bank + remaining company cash paid out as dividend (using leftover room at 20%, rest as salary at marginal rate).</li>
+    </ul>
+  </details>
+</div>
+
+<div class="card">
+  Presets:
+  <button onclick="preset('A','cap')">A: cap salary + dividends</button>
+  <button onclick="preset('A','high')">A: high salary yr 1, empty company</button>
+  <button onclick="preset('B','cap')">B: cap salary + dividends</button>
+  <button onclick="preset('B','defer')">B: cap salary, defer rest to later years</button>
+  <span class="note">Profit = company result before your salary. Same profits in both scenarios by default; edit freely.</span>
+</div>
+
+<div class="scenarios">
+  <div class="card sA"><h2>Scenario A</h2><div id="yearsA"></div><div id="resA"></div></div>
+  <div class="card sB"><h2>Scenario B</h2><div id="yearsB"></div><div id="resB"></div></div>
+</div>
+
+<div class="card" id="compare"></div>
+</div>
+
+<script>
+const NYEARS = 6;
+const P = {
+  muni:      {v:31.31, l:"Kommunalskatt %"},
+  stateRate: {v:20,    l:"Statlig skatt %"},
+  brytpunkt: {v:660400,l:"Brytpunkt (gross) kr"},
+  grundavdrag:{v:17400,l:"Grundavdrag kr"},
+  jobbavdrag:{v:41000, l:"Jobbskatteavdrag kr"},
+  agavg:     {v:31.42, l:"Arbetsgivaravgift %"},
+  corp:      {v:20.6,  l:"Bolagsskatt %"},
+  divTax:    {v:20,    l:"Utdelningsskatt %"},
+  grundbelopp:{v:322400,l:"Grundbelopp/yr kr"},
+  loneAvdrag:{v:644800,l:"Löneavdrag (8 IBB) kr"},
+  loneAndel: {v:50,    l:"Lönebaserat utrymme %"},
+  slr:       {v:1.96,  l:"SLR (schablonintäkt) %"},
+  usePfond:  {v:1,     l:"Periodiseringsfond (1/0)"},
+  startRoom: {v:0,     l:"Saved dividend room kr"},
+  startCash: {v:0,     l:"Company cash at start kr"},
+};
+const S = { A:{}, B:{} };
+function defYears(){ return Array.from({length:NYEARS},(_,i)=>({profit:i===0?2000000:0, salary:i===0?660400:0, dividend:0})); }
+S.A.years = defYears(); S.B.years = defYears();
+
+const fmt = n => Math.round(n).toLocaleString("sv-SE");
+
+// personal tax on total employment income (salary + over-room dividends)
+function personalTax(gross){
+  if (gross<=0) return 0;
+  const muni = P.muni.v/100 * Math.max(0, gross - P.grundavdrag.v);
+  const state = P.stateRate.v/100 * Math.max(0, gross - P.brytpunkt.v);
+  return Math.max(0, muni - Math.min(P.jobbavdrag.v, muni)) + state;
+}
+function marginalRate(gross){ return (personalTax(gross+1000)-personalTax(gross))/1000; }
+
+function simulate(years){
+  let cash=P.startCash.v, lossCF=0, room=P.startRoom.v, funds=[]; // funds: {amount, age}
+  const rows=[]; let warn=false;
+  let totNet=0, totTax=0;
+  years.forEach((y,i)=>{
+    const last = i===years.length-1;
+    const salaryCost = y.salary*(1+P.agavg.v/100);
+    const fundTotal = funds.reduce((s,f)=>s+f.amount,0);
+    let result = y.profit - salaryCost + fundTotal*P.slr.v/100;
+    // reverse pfond: forced (age>=6 or last year) + as needed to cover losses
+    let reversal=0;
+    funds.forEach(f=>{ if(f.age>=5||last){ reversal+=f.amount; f.amount=0; } });
+    if (result + reversal < 0){
+      for (const f of funds){ if(result+reversal>=0) break; const take=Math.min(f.amount, -(result+reversal)); f.amount-=take; reversal+=take; }
+    }
+    result += reversal;
+    // allocate new pfond
+    let alloc=0;
+    if (P.usePfond.v && !last && result>0){ alloc = result*0.25; result -= alloc; funds.push({amount:alloc, age:0}); }
+    funds.forEach(f=>f.age++); funds=funds.filter(f=>f.amount>0);
+    // loss carryforward + corporate tax
+    let taxable = result - Math.min(lossCF, Math.max(0,result));
+    lossCF = Math.max(0, lossCF - Math.max(0,result)) + Math.max(0, -result);
+    const corpTax = Math.max(0, taxable)*P.corp.v/100;
+    // dividend room (new 2026 rules)
+    room += P.grundbelopp.v + Math.max(0, y.salary - P.loneAvdrag.v)*P.loneAndel.v/100;
+    const divInRoom = Math.min(y.dividend, room);
+    const divOver = y.dividend - divInRoom;
+    room -= divInRoom;
+    // personal taxes
+    const persGross = y.salary + divOver; // over-room dividend taxed as employment income
+    const persTax = personalTax(persGross);
+    const divTax = divInRoom*P.divTax.v/100;
+    const net = persGross - persTax + divInRoom - divTax;
+    // company cash
+    cash += y.profit - salaryCost - corpTax - y.dividend;
+    if (cash < -1) warn=true;
+    const tax = persTax + divTax + corpTax + salaryCost - y.salary;
+    totNet+=net; totTax+=tax;
+    rows.push({i, net, tax, corpTax, persTax, divTax, agavg:salaryCost-y.salary, cash, alloc, reversal, room});
+  });
+  // final value: pay out remaining cash
+  const fundLeft = funds.reduce((s,f)=>s+f.amount,0); // should be 0 (forced last year)
+  let finalExtra=0, exitTaxNote="";
+  if (cash>0){
+    const inRoom = Math.min(cash, room);
+    const over = cash - inRoom;
+    const overNet = over - personalTax(over) ; // taken as salary-ish income in a fresh year (no salary assumed)
+    finalExtra = inRoom*(1-P.divTax.v/100) + Math.max(0, overNet);
+    exitTaxNote = over>0 ? ` (${fmt(inRoom)} at ${P.divTax.v}%, ${fmt(over)} as income)` : ` (at ${P.divTax.v}%)`;
+  }
+  return {rows, totNet, totTax, cash, room, warn, finalExtra, exitTaxNote, finalValue: totNet+finalExtra};
+}
+
+// ---- UI ----
+function buildParams(){
+  const el=document.getElementById("params");
+  el.innerHTML = Object.entries(P).map(([k,p])=>
+    `<label>${p.l}<br><input type="number" step="any" value="${p.v}" oninput="P['${k}'].v=+this.value||0; render()"></label>`).join("");
+}
+function slider(sc,i,field,max,step){
+  const v=S[sc].years[i][field];
+  return `<div class="row"><span>${field}</span>
+    <input type="range" min="0" max="${max}" step="${step}" value="${v}" oninput="setY('${sc}',${i},'${field}',this.value)">
+    <input type="number" step="1000" value="${v}" oninput="setY('${sc}',${i},'${field}',this.value)"></div>`;
+}
+function setY(sc,i,f,val){ S[sc].years[i][f]=+val||0; render(); }
+function buildYears(sc){
+  const res = simulate(S[sc].years);
+  document.getElementById("years"+sc).innerHTML = S[sc].years.map((y,i)=>{
+    const r=res.rows[i];
+    return `<div class="year"><div class="yhead"><span>Year ${i+1}</span>
+      <span class="net">net ${fmt(r.net)} · company ${fmt(r.cash)}</span></div>
+      ${slider(sc,i,"profit",4000000,10000)}
+      ${slider(sc,i,"salary",2000000,10000)}
+      ${slider(sc,i,"dividend",2000000,10000)}
+      <div class="note">tax ${fmt(r.tax)} (corp ${fmt(r.corpTax)}, agavg ${fmt(r.agavg)}, income ${fmt(r.persTax)}, div ${fmt(r.divTax)}) · pfond +${fmt(r.alloc)}/−${fmt(r.reversal)} · room left ${fmt(r.room)}</div>
+    </div>`;
+  }).join("");
+  document.getElementById("res"+sc).innerHTML = `
+    ${res.warn?'<div class="warn">⚠ dividends/salary exceed company cash at some point</div>':''}
+    <table>
+      <tr><td>Total net to your bank (yrs 1–${NYEARS})</td><td>${fmt(res.totNet)}</td></tr>
+      <tr><td>Total taxes paid</td><td>${fmt(res.totTax)}</td></tr>
+      <tr><td>Cash left in company</td><td>${fmt(res.cash)}</td></tr>
+      <tr><td>Unused dividend room</td><td>${fmt(res.room)}</td></tr>
+      <tr><td>…company cash if paid out${res.exitTaxNote}</td><td>${fmt(res.finalExtra)}</td></tr>
+      <tr class="tot"><td>Final value to you</td><td>${fmt(res.finalValue)}</td></tr>
+    </table>`;
+  return res;
+}
+function render(){
+  const a=buildYears("A"), b=buildYears("B");
+  const d=a.finalValue-b.finalValue;
+  document.getElementById("compare").innerHTML =
+    `<span class="diff">A − B = <span class="${d>=0?'pos':'neg'}">${d>=0?'+':''}${fmt(d)} kr</span></span>
+     <span class="note"> in final value to you (net received + company cash after payout taxes). Marginal tax on next salary krona at brytpunkt ≈ ${(marginalRate(P.brytpunkt.v+1)*100).toFixed(0)}% + ${P.agavg.v}% agavg on top.</span>`;
+}
+function preset(sc, kind){
+  const ys=S[sc].years, profit0=ys[0].profit||2000000;
+  ys.forEach(y=>{y.salary=0;y.dividend=0;});
+  if (kind==="cap"){ // cap salary yr1, dividend the rest yr2
+    ys[0].salary=P.brytpunkt.v;
+    const left = profit0 - ys[0].salary*(1+P.agavg.v/100);
+    ys[1].dividend = Math.max(0, Math.round(left*(1-P.corp.v/100*(P.usePfond.v?0.75:1))/1000)*1000);
+  } else if (kind==="high"){ // take everything as salary yr1
+    ys[0].salary = Math.round(profit0/(1+P.agavg.v/100)/1000)*1000;
+  } else if (kind==="defer"){ // cap salary yr1, cap salary again yrs 2-3 from stored profit
+    ys[0].salary=P.brytpunkt.v; ys[1].salary=P.brytpunkt.v; ys[2].salary=P.brytpunkt.v;
+  }
+  render();
+}
+buildParams();
+preset("A","high"); preset("B","defer");
+</script>
+</body>
+</html>
