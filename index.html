@@ -194,8 +194,10 @@ function render(){
   const bestR = run(best.S,best.F,best.G,I), capR = run(capS,cap,Infinity,I); // naive: cap salary + all dividends every year
   const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
   const dormR = bestOf(runDormant, I);
+  const balB = bestFuture(capS,I), balR = run(capS,balB.F,balB.G,I); // cap salary in profitable years, optimum after
   const plans = [
     [`Optimal: ${fmt(best.S)} salary per profitable year${I.years>0?`, ${fmt(best.F)} in payout years`:""}${best.G>0?`, ${fmt(best.G)}/yr dividend as income`:""}`, bestR],
+    [`Balanced: cap salary in profitable years, then optimum${I.years>0?` (${fmt(balB.F)} salary${balB.G>0?`, ${fmt(balB.G)}/yr dividend as income`:""} in payout years)`:""}`, balR],
     [`Naive: cap salary + all dividends every year`, capR],
     [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
     [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
