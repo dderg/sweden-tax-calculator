@@ -82,6 +82,8 @@ const P = {
   slr:        {v:1.96,  l:"Govt loan rate % (fund notional income)"},
   usePfond:   {v:1,     l:"Use tax deferral fund (1/0)"},
   liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
+  ret:        {v:5,     l:"Expected investment return %/yr"},
+  iskTax:     {v:0.888, l:"ISK tax %/yr of capital"},
 };
 const fmt = n => Math.round(n).toLocaleString("sv-SE");
 const ag = () => 1 + P.agavg.v/100;
@@ -97,6 +99,8 @@ function personalTax(sal, other=0){
 
 // One year: pay salary `sal`, max in-room dividend, then `over` above-room dividend (limited by cash).
 function year(st, sal, over, profit, label){
+  const gain = st.cash*P.ret.v/100; // company cash invested; gains are taxable profit
+  profit += gain;
   const cost = sal*ag();
   let result = profit - cost + st.fund*P.slr.v/100;
   let alloc=0, rev=0;
@@ -111,12 +115,18 @@ function year(st, sal, over, profit, label){
   st.cash -= divIn + divOver; st.room -= divIn;
   const net = sal + divOver - personalTax(sal, divOver) + divIn*(1-P.divTax.v/100);
   st.net += net;
-  st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net});
+  st.bank = st.bank*(1+(P.ret.v-P.iskTax.v)/100) + net; st.t++;
+  st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net, bank:st.bank});
+}
+// Value everything at a common horizon H (years from now): bank keeps growing in ISK after the plan ends.
+function finish(st, H){
+  st.val = st.bank*Math.pow(1+(P.ret.v-P.iskTax.v)/100, Math.max(0,H-st.t));
+  return st;
 }
 
 // Plan: salary S in each profitable year; each payout year salary F + above-room dividend G; leftover dumped in an extra year.
 function run(S, F, G, I){
-  const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
+  const st = {cash:0, fund:0, room:I.room0, net:0, bank:0, t:0, rows:[]};
   for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
   for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()), G, 0, "Payout year "+k);
   if (st.cash>1){ // final clean-out: reverse fund, tax it, pay out everything with no salary
@@ -124,22 +134,23 @@ function run(S, F, G, I){
     year(st, 0, st.cash, 0, "Clean-out year");
     st.rows[st.rows.length-1].corpTax = endTax;
   }
-  return st;
+  return finish(st, I.H);
 }
 // Dormant plan: salary S in profitable years, then 4 idle calendar years (in-room dividends only), then liquidate at 25%.
 function runDormant(S, I){
-  const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
+  const st = {cash:0, fund:0, room:I.room0, net:0, bank:0, t:0, rows:[]};
   for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
   for (let k=1;k<=4;k++) year(st, 0, 0, 0, "Dormant year "+k);
   const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
   const net = st.cash*(1-P.liqTax.v/100);
-  st.rows.push({label:"Liquidation (25%)", sal:0, divIn:0, divOver:st.cash, corpTax:endTax, fundDelta:0, cashEnd:0, net});
   st.net += net; st.cash = 0;
-  return st;
+  st.bank = st.bank*(1+(P.ret.v-P.iskTax.v)/100) + net; st.t++;
+  st.rows.push({label:"Liquidation (25%)", sal:0, divIn:0, divOver:0, corpTax:endTax, fundDelta:0, cashEnd:0, net, bank:st.bank});
+  return finish(st, I.H);
 }
 function bestOf(f, I){ // optimize this-year salary for a plan function
   let best=null; const maxS=Math.max(I.minSal, I.profit/ag());
-  for (let S=I.minSal; S<=maxS; S+=5000){ const r=f(S,I); if(!best||r.net>best.net) best=r; }
+  for (let S=I.minSal; S<=maxS; S+=5000){ const r=f(S,I); if(!best||r.val>best.val) best=r; }
   return best;
 }
 
@@ -150,12 +161,12 @@ function bestFuture(S, I){
   const Fs = [I.minSal]; for (let f=0; f<=cap+200000; f+=20000) if (f>=I.minSal) Fs.push(f);
   for (const F of Fs) for (let G=0; G<=1500000; G+=100000){
     const r = run(S,F,G,I);
-    if (!best || r.net>best.net) best={net:r.net,F,G};
+    if (!best || r.val>best.val) best={val:r.val,F,G};
   }
   return best;
 }
 
-function inputs(){ return { profit:profit.value*1e6, pyears:+pyears.value, years:+years.value, room0:+room0.value, minSal:+minSal.value }; }
+function inputs(){ const I={ profit:profit.value*1e6, pyears:+pyears.value, years:+years.value, room0:+room0.value, minSal:+minSal.value }; I.H = I.pyears + Math.max(I.years, 4) + 1; return I; }
 
 function render(){
   const I = inputs();
@@ -167,11 +178,11 @@ function render(){
   for (let S=I.minSal; S<=maxS; S+=step) Ss.add(S);
   for (const S of [...Ss].sort((a,b)=>a-b)){
     const b = bestFuture(S,I);
-    if (!best || b.net>best.net) best={S,...b};
+    if (!best || b.val>best.val) best={S,...b};
   }
   // refine around best
   for (let S=Math.max(I.minSal,best.S-step); S<=Math.min(maxS,best.S+step); S+=Math.max(1000,step/10)){
-    const b = bestFuture(S,I); if (b.net>best.net) best={S,...b};
+    const b = bestFuture(S,I); if (b.val>best.val) best={S,...b};
   }
   const capS = Math.min(cap,maxS);
   const bestR = run(best.S,best.F,best.G,I), capR = run(capS,cap,Infinity,I); // naive: cap salary + all dividends every year
@@ -183,13 +194,14 @@ function render(){
     [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
     [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
   ];
-  detail.innerHTML = plans.map(([t,r])=>{ const dd=r.net-bestR.net; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.net)} kr${dd<0?` (${fmt(dd)})`:""}</span>`, r); }).join("");
+  detail.innerHTML = `<div class="note">Ranked by value in your ISK after ${I.H} years: money taken out earlier compounds longer at ${P.ret.v}% minus ${P.iskTax.v}% ISK tax; company cash compounds at ${P.ret.v}% minus corporate tax on gains. "Taken out" is the plain sum without growth.</div>` +
+    plans.map(([t,r])=>{ const dd=r.val-bestR.val; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.val)} kr after ${I.H} yrs${dd<0?` (${fmt(dd)})`:""}</span> <span class="note">— ${fmt(r.net)} kr taken out</span>`, r); }).join("");
 }
 
 function table(title, r){
-  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left</th><th>Net to you</th></tr>` +
-    collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.net)}</td></tr>`).join("") +
-    `<tr><th>Total</th><td colspan="6"></td><th>${fmt(r.net)}</th></tr></table>`;
+  return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you</th><th>Your ISK</th></tr>` +
+    collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.net)}</td><td>${fmt(y.bank)}</td></tr>`).join("") +
+    `<tr><th>Total</th><td colspan="6"></td><th>${fmt(r.net)}</th><th>${fmt(r.val)}</th></tr></table>`;
 }
 
 // collapse runs of identical future years into one row
@@ -197,7 +209,7 @@ function collapse(rows){
   const out=[]; const same=(a,b)=>["sal","divIn","divOver","net"].every(k=>Math.abs(a[k]-b[k])<=2000);
   for (const y of rows){
     const p=out[out.length-1];
-    if (p && p.label.split(" ")[0]===y.label.split(" ")[0] && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; }
+    if (p && p.label.split(" ")[0]===y.label.split(" ")[0] && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; p.bank=y.bank; }
     else out.push({...y,count:1});
   }
   return out.map(y=>({...y,label:y.count>1?`${y.label} … +${y.count-1} more (each)`:y.label}));
