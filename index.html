@@ -83,7 +83,7 @@ const P = {
   usePfond:   {v:1,     l:"Use tax deferral fund (1/0)"},
   liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
   ret:        {v:5,     l:"Expected investment return %/yr"},
-  iskTax:     {v:0.888, l:"ISK tax %/yr of capital"},
+  iskTax:     {v:0.888, l:"ISK/KF schablon tax %/yr of capital"},
   overCap:    {v:7254000,l:"Ceiling kr/yr for over-room dividends as income (90 IBB)"},
   capTax:     {v:30,    l:"Capital tax % above that ceiling"},
 };
@@ -101,8 +101,7 @@ function personalTax(sal, other=0){
 
 // One year: pay salary `sal`, max in-room dividend, then `over` above-room dividend (limited by cash).
 function year(st, sal, over, profit, label){
-  const gain = st.cash*P.ret.v/100; // company cash invested; gains are taxable profit
-  profit += gain;
+  st.cash *= 1+(P.ret.v-P.iskTax.v)/100; // company cash in a KF: same return, same flat schablon tax, no corporate tax on gains
   const cost = sal*ag();
   let result = profit - cost + st.fund*P.slr.v/100;
   let alloc=0, rev=0;
@@ -197,7 +196,7 @@ function render(){
     [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
     [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
   ];
-  detail.innerHTML = `<div class="note">Ranked by value in your ISK after ${I.H} years: money taken out earlier compounds longer at ${P.ret.v}% minus ${P.iskTax.v}% ISK tax; company cash compounds at ${P.ret.v}% minus corporate tax on gains. "Taken out" is the plain sum without growth.</div>` +
+  detail.innerHTML = `<div class="note">Ranked by value in your ISK after ${I.H} years. Both your ISK and the company's KF compound at ${P.ret.v}% minus ${P.iskTax.v}% schablon tax; the difference is only when and how the money leaves the company. "Taken out" is the plain sum without growth.</div>` +
     plans.map(([t,r])=>{ const dd=r.val-bestR.val; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.val)} kr after ${I.H} yrs${dd<0?` (${fmt(dd)})`:""}</span> <span class="note">— ${fmt(r.net)} kr taken out</span>`, r); }).join("");
 }
 
