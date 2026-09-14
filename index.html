@@ -36,16 +36,16 @@
 </head>
 <body>
 <div class="wrap">
-<h1>Fåmansbolag: salary vs dividends vs deferral (2026 rules, Värmdö)</h1>
+<h1>Swedish owner-company tax: salary vs dividends vs deferral (2026 rules, Värmdö)</h1>
 
 <div class="card">
   <h2>Tax parameters</h2>
   <div class="params" id="params"></div>
   <details><summary>Model notes</summary>
     <ul>
-      <li>Personal tax: kommunalskatt × (gross − grundavdrag) − jobbskatteavdrag + 20% × (gross − brytpunkt, if above). Approximation; tune grundavdrag/jobbskatteavdrag to match your slip.</li>
-      <li>Dividend room (new 2026 3:12): grundbelopp 322,400/yr + 50% × (your salary − 644,800), unused room saved (no uplift). Within room: 20% tax. Above room: taxed as extra salary income.</li>
-      <li>Periodiseringsfond: 25% of positive taxable result set aside each year (if enabled), auto-reversed against losses (e.g. salary > profit in a later year), force-reversed after 6 years and at horizon end. Schablonintäkt (SLR × fund) taxed yearly.</li>
+      <li>Personal tax: municipal tax × (gross − basic deduction) − earned-income credit + 20% × (gross − threshold, if above). Approximation; tune the deduction/credit to match your payslip.</li>
+      <li>Dividend room (new 2026 "3:12" rules): base amount 322,400/yr + 50% × (your salary − 644,800), unused room saved (no uplift). Within room: 20% tax. Above room: taxed as extra salary income.</li>
+      <li>Tax deferral fund (periodiseringsfond): 25% of positive taxable result set aside each year (if enabled), auto-reversed against losses (e.g. salary > profit in a later year), force-reversed after 6 years and at horizon end. Notional interest income (govt loan rate × fund) taxed yearly.</li>
       <li>Losses carry forward inside the company. Dividends limited by company cash (warning if exceeded).</li>
       <li>"Final value" = cash in bank + remaining company cash paid out as dividend (using leftover room at 20%, rest as salary at marginal rate).</li>
     </ul>
@@ -72,19 +72,19 @@
 <script>
 const NYEARS = 6;
 const P = {
-  muni:      {v:31.31, l:"Kommunalskatt %"},
-  stateRate: {v:20,    l:"Statlig skatt %"},
-  brytpunkt: {v:660400,l:"Brytpunkt (gross) kr"},
-  grundavdrag:{v:17400,l:"Grundavdrag kr"},
-  jobbavdrag:{v:41000, l:"Jobbskatteavdrag kr"},
-  agavg:     {v:31.42, l:"Arbetsgivaravgift %"},
-  corp:      {v:20.6,  l:"Bolagsskatt %"},
-  divTax:    {v:20,    l:"Utdelningsskatt %"},
-  grundbelopp:{v:322400,l:"Grundbelopp/yr kr"},
-  loneAvdrag:{v:644800,l:"Löneavdrag (8 IBB) kr"},
-  loneAndel: {v:50,    l:"Lönebaserat utrymme %"},
-  slr:       {v:1.96,  l:"SLR (schablonintäkt) %"},
-  usePfond:  {v:1,     l:"Periodiseringsfond (1/0)"},
+  muni:      {v:31.31, l:"Municipal tax % (kommunalskatt)"},
+  stateRate: {v:20,    l:"State tax % (statlig skatt)"},
+  brytpunkt: {v:660400,l:"State tax threshold, gross kr"},
+  grundavdrag:{v:17400,l:"Basic deduction kr (grundavdrag)"},
+  jobbavdrag:{v:41000, l:"Earned-income credit kr (jobbskatteavdrag)"},
+  agavg:     {v:31.42, l:"Employer contributions % (arbetsgivaravgift)"},
+  corp:      {v:20.6,  l:"Corporate tax % (bolagsskatt)"},
+  divTax:    {v:20,    l:"Dividend tax % (within room)"},
+  grundbelopp:{v:322400,l:"Dividend base amount/yr kr (grundbelopp)"},
+  loneAvdrag:{v:644800,l:"Salary deduction kr (8 IBB)"},
+  loneAndel: {v:50,    l:"Salary-based room %"},
+  slr:       {v:1.96,  l:"Govt loan rate % (fund interest income)"},
+  usePfond:  {v:1,     l:"Tax deferral fund on/off (periodiseringsfond)"},
   startRoom: {v:0,     l:"Saved dividend room kr"},
   startCash: {v:0,     l:"Company cash at start kr"},
 };
@@ -179,7 +179,7 @@ function buildYears(sc){
       ${slider(sc,i,"profit",4000000,10000)}
       ${slider(sc,i,"salary",2000000,10000)}
       ${slider(sc,i,"dividend",2000000,10000)}
-      <div class="note">tax ${fmt(r.tax)} (corp ${fmt(r.corpTax)}, agavg ${fmt(r.agavg)}, income ${fmt(r.persTax)}, div ${fmt(r.divTax)}) · pfond +${fmt(r.alloc)}/−${fmt(r.reversal)} · room left ${fmt(r.room)}</div>
+      <div class="note">tax ${fmt(r.tax)} (corporate ${fmt(r.corpTax)}, employer contrib. ${fmt(r.agavg)}, income ${fmt(r.persTax)}, dividend ${fmt(r.divTax)}) · deferral fund +${fmt(r.alloc)}/−${fmt(r.reversal)} · dividend room left ${fmt(r.room)}</div>
     </div>`;
   }).join("");
   document.getElementById("res"+sc).innerHTML = `
@@ -199,7 +199,7 @@ function render(){
   const d=a.finalValue-b.finalValue;
   document.getElementById("compare").innerHTML =
     `<span class="diff">A − B = <span class="${d>=0?'pos':'neg'}">${d>=0?'+':''}${fmt(d)} kr</span></span>
-     <span class="note"> in final value to you (net received + company cash after payout taxes). Marginal tax on next salary krona at brytpunkt ≈ ${(marginalRate(P.brytpunkt.v+1)*100).toFixed(0)}% + ${P.agavg.v}% agavg on top.</span>`;
+     <span class="note"> in final value to you (net received + company cash after payout taxes). Marginal tax on next salary krona above the threshold ≈ ${(marginalRate(P.brytpunkt.v+1)*100).toFixed(0)}% + ${P.agavg.v}% employer contributions on top.</span>`;
 }
 function preset(sc, kind){
   const ys=S[sc].years, profit0=ys[0].profit||2000000;
