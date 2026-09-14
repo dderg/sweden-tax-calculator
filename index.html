@@ -31,15 +31,15 @@
 <p class="note">You tell it the profit and how many profitless years follow. It searches every combination of this-year salary, future-year salary, and dividends (within the 20% room and above it) and reports the plan that leaves you with the most money after all taxes.</p>
 
 <div class="card">
-  <div class="ctl"><label>Company profit this year, before your salary (kr)</label>
-    <input type="range" id="profit" min="0" max="6000000" step="10000" value="2000000">
-    <input type="number" id="profit_n" step="10000" value="2000000"></div>
+  <div class="ctl"><label>Company profit this year, before your salary (Mkr)</label>
+    <input type="range" id="profit" min="0" max="50" step="0.05" value="2">
+    <input type="number" id="profit_n" step="0.05" value="2"></div>
   <div class="ctl"><label>Future years (money taken out over these)</label>
     <input type="range" id="years" min="0" max="100" step="1" value="3">
     <input type="number" id="years_n" step="1" value="3"></div>
-  <div class="ctl"><label>Company profit in each future year, before salary (kr)</label>
-    <input type="range" id="futProfit" min="0" max="6000000" step="10000" value="0">
-    <input type="number" id="futProfit_n" step="10000" value="0"></div>
+  <div class="ctl"><label>Company profit in each future year, before salary (Mkr)</label>
+    <input type="range" id="futProfit" min="0" max="50" step="0.05" value="0">
+    <input type="number" id="futProfit_n" step="0.05" value="0"></div>
   <div class="ctl"><label>Saved dividend room from earlier years (kr)</label>
     <input type="range" id="room0" min="0" max="3000000" step="10000" value="0">
     <input type="number" id="room0_n" step="10000" value="0"></div>
@@ -88,10 +88,13 @@ const P = {
 const fmt = n => Math.round(n).toLocaleString("sv-SE");
 const ag = () => 1 + P.agavg.v/100;
 
-function personalTax(gross){
+// sal = salary (gets the earned-income credit), other = above-room dividends taxed as income (no credit)
+function personalTax(sal, other=0){
+  const gross = sal + other;
   if (gross<=0) return 0;
   const muni = P.muni.v/100 * Math.max(0, gross - P.grundavdrag.v);
-  return Math.max(0, muni - P.jobbavdrag.v) + P.stateRate.v/100 * Math.max(0, gross - P.brytpunkt.v);
+  const credit = Math.min(P.jobbavdrag.v, P.muni.v/100 * Math.max(0, sal - P.grundavdrag.v));
+  return muni - credit + P.stateRate.v/100 * Math.max(0, gross - P.brytpunkt.v);
 }
 
 // One year: pay salary `sal`, max in-room dividend, then `over` above-room dividend (limited by cash).
@@ -108,7 +111,7 @@ function year(st, sal, over, profit, label){
   const divIn = Math.min(st.room, free);
   const divOver = Math.min(over, free - divIn);
   st.cash -= divIn + divOver; st.room -= divIn;
-  const net = sal + divOver - personalTax(sal + divOver) + divIn*(1-P.divTax.v/100);
+  const net = sal + divOver - personalTax(sal, divOver) + divIn*(1-P.divTax.v/100);
   st.net += net;
   st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net});
 }
@@ -155,7 +158,7 @@ function bestFuture(S, I){
   return best;
 }
 
-function inputs(){ return { profit:+profit.value, years:+years.value, futProfit:+futProfit.value, room0:+room0.value, minSal:+minSal.value }; }
+function inputs(){ return { profit:profit.value*1e6, years:+years.value, futProfit:futProfit.value*1e6, room0:+room0.value, minSal:+minSal.value }; }
 
 function render(){
   const I = inputs();
@@ -173,8 +176,8 @@ function render(){
   for (let S=Math.max(I.minSal,best.S-step); S<=Math.min(maxS,best.S+step); S+=Math.max(1000,step/10)){
     const b = bestFuture(S,I); if (b.net>best.net) best={S,...b};
   }
-  const capS = Math.min(cap,maxS), capB = bestFuture(capS,I);
-  const bestR = run(best.S,best.F,best.G,I), capR = run(capS,capB.F,capB.G,I);
+  const capS = Math.min(cap,maxS);
+  const bestR = run(best.S,best.F,best.G,I), capR = run(capS,cap,Infinity,I); // naive: cap salary + all dividends every year
   const d = bestR.net - capR.net;
   const near = pts.filter(p=>p[1]>=bestR.net-5000).map(p=>p[0]);
   const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
@@ -183,11 +186,11 @@ function render(){
   headline.innerHTML = `
     <div class="big">Take ${fmt(best.S)} kr salary this year → total ${fmt(bestR.net)} kr in your pocket</div>
     <div>Plus dividends within room this year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Future years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
-    <div>Best plan with exactly the 660,400 cap salary this year: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span>.</div>
+    <div>Naive plan — cap salary (660,400) every year, dividend room, and everything else as dividend income right away: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span> better.</div>
     <div class="note">Any salary this year between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} is within 5,000 kr of the optimum.</div>
     <h2 style="margin-top:12px">Retiring? Keep vs dissolve</h2>
     <table>${alts.map(([l,n])=>`<tr><td>${l}</td><td>${fmt(n)}</td><td class="${n-bestR.net>=0?'pos':'neg'}">${n-bestR.net>=0?'+':''}${fmt(n-bestR.net)}</td></tr>`).join("")}</table>`;
-  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Cap-salary plan (salary ${fmt(capS)} this year, future re-optimized)`, capR)
+  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Naive plan (cap salary + all dividends every year)`, capR)
     + table(`Dissolve now (salary ${fmt(nowR.rows[0].sal)} this year)`, nowR) + table(`Dormant then liquidate (salary ${fmt(dormR.rows[0].sal)} this year)`, dormR);
 }
 
