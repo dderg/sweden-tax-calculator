@@ -34,9 +34,12 @@
   <div class="ctl"><label>Company profit this year, before your salary (kr)</label>
     <input type="range" id="profit" min="0" max="6000000" step="10000" value="2000000">
     <input type="number" id="profit_n" step="10000" value="2000000"></div>
-  <div class="ctl"><label>Future years with no profit (money can be taken out over these)</label>
-    <input type="range" id="years" min="0" max="8" step="1" value="3">
+  <div class="ctl"><label>Future years (money taken out over these)</label>
+    <input type="range" id="years" min="0" max="100" step="1" value="3">
     <input type="number" id="years_n" step="1" value="3"></div>
+  <div class="ctl"><label>Company profit in each future year, before salary (kr)</label>
+    <input type="range" id="futProfit" min="0" max="6000000" step="10000" value="0">
+    <input type="number" id="futProfit_n" step="10000" value="0"></div>
   <div class="ctl"><label>Saved dividend room from earlier years (kr)</label>
     <input type="range" id="room0" min="0" max="3000000" step="10000" value="0">
     <input type="number" id="room0_n" step="10000" value="0"></div>
@@ -46,11 +49,7 @@
   <details><summary>Tax parameters (2026, Värmdö)</summary><div class="params" id="params"></div></details>
 </div>
 
-<div class="card">
-  <div id="headline"></div>
-  <canvas id="chart" width="1000" height="300"></canvas>
-  <div class="note">Blue: best achievable total for each salary level this year (future years re-optimized for each point). Dashed: state-tax threshold (660,400). Green dot: optimum.</div>
-</div>
+<div class="card"><div id="headline"></div></div>
 
 <div class="card">
   <h2>Plan comparison</h2>
@@ -116,7 +115,7 @@ function year(st, sal, over, profit, label){
 function run(S, F, G, I){
   const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
   year(st, S, 0, I.profit, "This year");
-  for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()), G, 0, "Year +"+k);
+  for (let k=1;k<=I.years && (st.cash>1 || I.futProfit>0);k++) year(st, Math.min(F, (st.cash+I.futProfit)/ag()), G, I.futProfit, "Year +"+k);
   if (st.cash>1){ // final clean-out: reverse fund, tax it, pay out everything with no salary
     const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
     year(st, 0, st.cash, 0, "Clean-out year");
@@ -129,21 +128,22 @@ function run(S, F, G, I){
 function bestFuture(S, I){
   const cap = P.brytpunkt.v;
   let best = null;
-  const Fs = [I.minSal]; for (let f=0; f<=cap+200000; f+=20000) if (f>=I.minSal) Fs.push(f);
-  for (const F of Fs) for (let G=0; G<=1500000; G+=50000){
+  const fMax = Math.max(cap+200000, I.futProfit/ag()), fStep = Math.max(20000, Math.round(fMax/25/10000)*10000);
+  const Fs = [I.minSal]; for (let f=0; f<=fMax; f+=fStep) if (f>=I.minSal) Fs.push(f);
+  for (const F of Fs) for (let G=0; G<=1500000; G+=100000){
     const r = run(S,F,G,I);
     if (!best || r.net>best.net) best={net:r.net,F,G};
   }
   return best;
 }
 
-function inputs(){ return { profit:+profit.value, years:+years.value, room0:+room0.value, minSal:+minSal.value }; }
+function inputs(){ return { profit:+profit.value, years:+years.value, futProfit:+futProfit.value, room0:+room0.value, minSal:+minSal.value }; }
 
 function render(){
   const I = inputs();
   const cap = P.brytpunkt.v;
   const maxS = Math.max(I.minSal, I.profit/ag());
-  const step = Math.max(10000, Math.round(maxS/60/10000)*10000);
+  const step = Math.max(10000, Math.round(maxS/30/10000)*10000);
   const pts=[]; let best=null;
   const Ss = new Set([I.minSal, Math.min(cap,maxS), maxS]);
   for (let S=I.minSal; S<=maxS; S+=step) Ss.add(S);
@@ -158,36 +158,33 @@ function render(){
   const capS = Math.min(cap,maxS), capB = bestFuture(capS,I);
   const bestR = run(best.S,best.F,best.G,I), capR = run(capS,capB.F,capB.G,I);
   const d = bestR.net - capR.net;
+  const near = pts.filter(p=>p[1]>=bestR.net-5000).map(p=>p[0]);
   headline.innerHTML = `
     <div class="big">Take ${fmt(best.S)} kr salary this year → total ${fmt(bestR.net)} kr in your pocket</div>
     <div>Plus dividends within room this year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Future years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
-    <div>Best plan with exactly the 660,400 cap salary this year: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span>.</div>`;
-  draw(pts, capS, {S:best.S, net:bestR.net});
+    <div>Best plan with exactly the 660,400 cap salary this year: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span>.</div>
+    <div class="note">Any salary this year between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} is within 5,000 kr of the optimum.</div>`;
   detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Cap-salary plan (salary ${fmt(capS)} this year, future re-optimized)`, capR);
 }
 
 function table(title, r){
   return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left</th><th>Net to you</th></tr>` +
-    r.rows.map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.net)}</td></tr>`).join("") +
+    collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.net)}</td></tr>`).join("") +
     `<tr><th>Total</th><td colspan="6"></td><th>${fmt(r.net)}</th></tr></table>`;
 }
 
-function draw(pts, cap, best){
-  const c=chart, ctx=c.getContext("2d"), W=c.width, H=c.height, L=70, B=30, T=10;
-  ctx.clearRect(0,0,W,H);
-  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
-  const x0=Math.min(...xs), x1=Math.max(...xs)||1, y0=Math.min(...ys), y1=Math.max(...ys);
-  const X=s=>L+(s-x0)/((x1-x0)||1)*(W-L-10), Y=n=>T+(1-(n-y0)/((y1-y0)||1))*(H-T-B);
-  ctx.font="11px system-ui"; ctx.fillStyle="#666"; ctx.strokeStyle="#ddd";
-  for (let i=0;i<=4;i++){ const v=y0+(y1-y0)*i/4; ctx.fillText(fmt(v), 2, Y(v)+4); ctx.beginPath(); ctx.moveTo(L,Y(v)); ctx.lineTo(W-10,Y(v)); ctx.stroke(); }
-  for (let i=0;i<=5;i++){ const v=x0+(x1-x0)*i/5; ctx.fillText(fmt(v), X(v)-20, H-8); }
-  ctx.strokeStyle="#999"; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(X(cap),T); ctx.lineTo(X(cap),H-B); ctx.stroke(); ctx.setLineDash([]);
-  ctx.strokeStyle="#2563eb"; ctx.lineWidth=2; ctx.beginPath();
-  pts.forEach(([s,n],i)=> i?ctx.lineTo(X(s),Y(n)):ctx.moveTo(X(s),Y(n))); ctx.stroke(); ctx.lineWidth=1;
-  ctx.fillStyle="#0a7a2f"; ctx.beginPath(); ctx.arc(X(best.S),Y(best.net),5,0,7); ctx.fill();
+// collapse runs of identical future years into one row
+function collapse(rows){
+  const out=[]; const same=(a,b)=>["sal","divIn","divOver","net"].every(k=>Math.abs(a[k]-b[k])<=2000);
+  for (const y of rows){
+    const p=out[out.length-1];
+    if (p && p.label.startsWith("Year") && y.label.startsWith("Year") && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; }
+    else out.push({...y,count:1});
+  }
+  return out.map(y=>({...y,label:y.count>1?`${y.label} … +${y.count-1} more (each)`:y.label}));
 }
 
-for (const id of ["profit","years","room0","minSal"]){
+for (const id of ["profit","years","futProfit","room0","minSal"]){
   const r=document.getElementById(id), n=document.getElementById(id+"_n");
   r.addEventListener("input", ()=>{ n.value=r.value; schedule(); });
   n.addEventListener("input", ()=>{ r.value=n.value; schedule(); });
