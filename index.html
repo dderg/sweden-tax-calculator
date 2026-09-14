@@ -27,19 +27,19 @@
 </head>
 <body>
 <div class="wrap">
-<h1>Optimal salary & dividends for one profitable year</h1>
-<p class="note">You tell it the profit and how many profitless years follow. It searches every combination of this-year salary, future-year salary, and dividends (within the 20% room and above it) and reports the plan that leaves you with the most money after all taxes.</p>
+<h1>Optimal salary & dividends</h1>
+<p class="note">You tell it the yearly profit, for how many years, and how many years after that you're willing to keep taking money out. It searches salary during the profitable years, salary during the payout years, and dividends (within the 20% room and above it) and reports the plan that leaves you with the most money after all taxes.</p>
 
 <div class="card">
-  <div class="ctl"><label>Company profit this year, before your salary (Mkr)</label>
+  <div class="ctl"><label>Company profit per year, before your salary (Mkr)</label>
     <input type="range" id="profit" min="0" max="50" step="0.05" value="2">
     <input type="number" id="profit_n" step="0.05" value="2"></div>
-  <div class="ctl"><label>Future years (money taken out over these)</label>
+  <div class="ctl"><label>Profitable years</label>
+    <input type="range" id="pyears" min="1" max="30" step="1" value="1">
+    <input type="number" id="pyears_n" step="1" value="1"></div>
+  <div class="ctl"><label>Payout years after that (no profit, money taken out)</label>
     <input type="range" id="years" min="0" max="100" step="1" value="3">
     <input type="number" id="years_n" step="1" value="3"></div>
-  <div class="ctl"><label>Company profit in each future year, before salary (Mkr)</label>
-    <input type="range" id="futProfit" min="0" max="50" step="0.05" value="0">
-    <input type="number" id="futProfit_n" step="0.05" value="0"></div>
   <div class="ctl"><label>Saved dividend room from earlier years (kr)</label>
     <input type="range" id="room0" min="0" max="3000000" step="10000" value="0">
     <input type="number" id="room0_n" step="10000" value="0"></div>
@@ -116,11 +116,11 @@ function year(st, sal, over, profit, label){
   st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net});
 }
 
-// Plan: this-year salary S; each future year salary F + above-room dividend G; leftover dumped in an extra year.
+// Plan: salary S in each profitable year; each payout year salary F + above-room dividend G; leftover dumped in an extra year.
 function run(S, F, G, I){
   const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
-  year(st, S, 0, I.profit, "This year");
-  for (let k=1;k<=I.years && (st.cash>1 || I.futProfit>0);k++) year(st, Math.min(F, (st.cash+I.futProfit)/ag()), G, I.futProfit, "Year +"+k);
+  for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
+  for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()), G, 0, "Payout year "+k);
   if (st.cash>1){ // final clean-out: reverse fund, tax it, pay out everything with no salary
     const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
     year(st, 0, st.cash, 0, "Clean-out year");
@@ -128,10 +128,10 @@ function run(S, F, G, I){
   }
   return st;
 }
-// Dormant plan: salary S this year, then 4 idle calendar years (in-room dividends only), then liquidate at 25%.
+// Dormant plan: salary S in profitable years, then 4 idle calendar years (in-room dividends only), then liquidate at 25%.
 function runDormant(S, I){
   const st = {cash:0, fund:0, room:I.room0, net:0, rows:[]};
-  year(st, S, 0, I.profit, "This year");
+  for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
   for (let k=1;k<=4;k++) year(st, 0, 0, 0, "Dormant year "+k);
   const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
   const net = st.cash*(1-P.liqTax.v/100);
@@ -149,8 +149,7 @@ function bestOf(f, I){ // optimize this-year salary for a plan function
 function bestFuture(S, I){
   const cap = P.brytpunkt.v;
   let best = null;
-  const fMax = Math.max(cap+200000, I.futProfit/ag()), fStep = Math.max(20000, Math.round(fMax/25/10000)*10000);
-  const Fs = [I.minSal]; for (let f=0; f<=fMax; f+=fStep) if (f>=I.minSal) Fs.push(f);
+  const Fs = [I.minSal]; for (let f=0; f<=cap+200000; f+=20000) if (f>=I.minSal) Fs.push(f);
   for (const F of Fs) for (let G=0; G<=1500000; G+=100000){
     const r = run(S,F,G,I);
     if (!best || r.net>best.net) best={net:r.net,F,G};
@@ -158,7 +157,7 @@ function bestFuture(S, I){
   return best;
 }
 
-function inputs(){ return { profit:profit.value*1e6, years:+years.value, futProfit:futProfit.value*1e6, room0:+room0.value, minSal:+minSal.value }; }
+function inputs(){ return { profit:profit.value*1e6, pyears:+pyears.value, years:+years.value, room0:+room0.value, minSal:+minSal.value }; }
 
 function render(){
   const I = inputs();
@@ -182,16 +181,16 @@ function render(){
   const near = pts.filter(p=>p[1]>=bestR.net-5000).map(p=>p[0]);
   const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
   const dormR = bestOf(runDormant, I);
-  const alts = [["Keep company, optimal plan above", bestR.net],["Dissolve now (after this year's salary)", nowR.net],["Dormant 4 years, then liquidate at 25%", dormR.net]];
+  const alts = [["Keep company, optimal plan above", bestR.net],["Dissolve right after the last profitable year", nowR.net],["Dormant 4 years, then liquidate at 25%", dormR.net]];
   headline.innerHTML = `
-    <div class="big">Take ${fmt(best.S)} kr salary this year → total ${fmt(bestR.net)} kr in your pocket</div>
-    <div>Plus dividends within room this year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Future years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
+    <div class="big">Take ${fmt(best.S)} kr salary per profitable year → total ${fmt(bestR.net)} kr in your pocket</div>
+    <div>Plus dividends within room each profitable year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Payout years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
     <div>Naive plan — cap salary (660,400) every year, dividend room, and everything else as dividend income right away: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span> better.</div>
-    <div class="note">Any salary this year between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} is within 5,000 kr of the optimum.</div>
+    <div class="note">Any salary between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} in the profitable years is within 5,000 kr of the optimum.</div>
     <h2 style="margin-top:12px">Retiring? Keep vs dissolve</h2>
     <table>${alts.map(([l,n])=>`<tr><td>${l}</td><td>${fmt(n)}</td><td class="${n-bestR.net>=0?'pos':'neg'}">${n-bestR.net>=0?'+':''}${fmt(n-bestR.net)}</td></tr>`).join("")}</table>`;
-  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} this year)`, bestR) + table(`Naive plan (cap salary + all dividends every year)`, capR)
-    + table(`Dissolve now (salary ${fmt(nowR.rows[0].sal)} this year)`, nowR) + table(`Dormant then liquidate (salary ${fmt(dormR.rows[0].sal)} this year)`, dormR);
+  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} per profitable year)`, bestR) + table(`Naive plan (cap salary + all dividends every year)`, capR)
+    + table(`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR) + table(`Dormant then liquidate (salary ${fmt(dormR.rows[0].sal)})`, dormR);
 }
 
 function table(title, r){
@@ -205,13 +204,13 @@ function collapse(rows){
   const out=[]; const same=(a,b)=>["sal","divIn","divOver","net"].every(k=>Math.abs(a[k]-b[k])<=2000);
   for (const y of rows){
     const p=out[out.length-1];
-    if (p && p.label.startsWith("Year") && y.label.startsWith("Year") && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; }
+    if (p && p.label.split(" ")[0]===y.label.split(" ")[0] && same(p,y)){ p.count++; p.cashEnd=y.cashEnd; }
     else out.push({...y,count:1});
   }
   return out.map(y=>({...y,label:y.count>1?`${y.label} … +${y.count-1} more (each)`:y.label}));
 }
 
-for (const id of ["profit","years","futProfit","room0","minSal"]){
+for (const id of ["profit","pyears","years","room0","minSal"]){
   const r=document.getElementById(id), n=document.getElementById(id+"_n");
   r.addEventListener("input", ()=>{ n.value=r.value; schedule(); });
   n.addEventListener("input", ()=>{ r.value=n.value; schedule(); });
