@@ -60,7 +60,8 @@
   <div id="detail"></div>
   <details><summary>Model notes</summary>
     <ul>
-      <li>Personal income tax = municipal × (gross − basic deduction) − earned-income credit + 20% × (gross − threshold, if above).</li>
+      <li>Personal income tax follows Skatteverket's 2026 formulas (SKV 433): income-dependent grundavdrag, bracketed jobbskatteavdrag on salary only, skattereduktion för förvärvsinkomst, 20% state tax above 643,000 taxable. Church/burial fee and public-service fee ignored.</li>
+      <li>Salary also earns pension rights (18.5% of income up to 8.07 IBB = 673,038) and sickness/parental cover. This non-cash value is counted at the "pension/SGI %" parameter (default 10% of salary up to the ceiling); set to 0 to compare cash only.</li>
       <li>Dividend room ("gränsbelopp", 2026 rules, per Skatteverket): base 322,400/yr per company (split between owners) + 50% × (last year's owner payroll − 644,800; deducted once — spouses compute jointly), unused room saved without uplift. Dividends within room: 20% tax.</li>
       <li>Dividends above room: taxed as employment income on top of that year's salary (no employer contributions, no pension/benefit rights), split between owners, up to a ceiling of 90 IBB (7,254,000 kr) per person and year; anything above the ceiling is capital income at 30%.</li>
       <li>With 2 owners (spouses, 50/50) both take the same salary; each has their own brackets and earned-income credit.</li>
@@ -69,7 +70,7 @@
       <li>"Dormant then liquidate" (trädabolag, 4:25 rule from 2026): after this year you stop all activity and take no salary for 4 full calendar years, only in-room dividends (room keeps accruing 322,400/yr). Year 5 the shares are unqualified and everything left is taxed at a flat 25%.</li>
     </ul>
   </details>
-  <div class="warn">Sanity-check with your accountant: (1) above-room dividends taxed as income without employer contributions, (2) the 50%-of-salary room rule with a single 644,800 deduction, (3) that low salary years are acceptable for your pension/benefits (use the minimum-salary slider).</div>
+  <div class="warn">Sanity-check with your accountant: (1) above-room dividends taxed as income without employer contributions, (2) the 50%-of-salary room rule with a single 644,800 deduction, (3) how much you value pension/SGI rights from salary (the parameter that decides low salary vs cap salary).</div>
 </div>
 </div>
 
@@ -77,16 +78,18 @@
 const P = {
   muni:       {v:31.31, l:"Municipal tax % (kommunalskatt)"},
   stateRate:  {v:20,    l:"State tax % (statlig skatt)"},
-  brytpunkt:  {v:660400,l:"State tax threshold, gross kr"},
-  grundavdrag:{v:17400, l:"Basic deduction kr (grundavdrag)"},
-  jobbavdrag: {v:41000, l:"Earned-income credit kr (jobbskatteavdrag)"},
+  skikt:      {v:643000,l:"State tax threshold, taxable income kr (skiktgräns)"},
+  brytpunkt:  {v:660400,l:"Salary cap used for naive/balanced plans (brytpunkt, gross)"},
+  pbb:        {v:59200, l:"Prisbasbelopp kr"},
+  ibb:        {v:83400, l:"Inkomstbasbelopp kr"},
+  pensionVal: {v:10,    l:"Value of pension/SGI rights, % of salary up to 8.07 IBB"},
   agavg:      {v:31.42, l:"Employer contributions % (arbetsgivaravgift)"},
   corp:       {v:20.6,  l:"Corporate tax % (bolagsskatt)"},
   divTax:     {v:20,    l:"Dividend tax % within room"},
   grundbelopp:{v:322400,l:"Dividend base amount/yr kr (grundbelopp)"},
   loneAvdrag: {v:644800,l:"Salary deduction kr (8 IBB)"},
   loneAndel:  {v:50,    l:"Salary-based room % of salary above deduction"},
-  slr:        {v:1.96,  l:"Govt loan rate % (fund notional income)"},
+  slr:        {v:2.55,  l:"Govt loan rate % (fund notional income)"},
   usePfond:   {v:1,     l:"Use tax deferral fund (1/0)"},
   liqTax:     {v:25,    l:"Tax % on unqualified shares after dormancy (4:25)"},
   ret:        {v:5,     l:"Expected investment return %/yr"},
@@ -97,14 +100,25 @@ const P = {
 const fmt = n => Math.round(n).toLocaleString("sv-SE");
 const ag = () => 1 + P.agavg.v/100;
 
-// sal = salary (gets the earned-income credit), other = above-room dividends taxed as income (no credit)
+// Personal income tax 2026 per Skatteverket SKV 433: income-dependent grundavdrag, bracketed jobbskatteavdrag
+// (salary only), skattereduktion för förvärvsinkomst, state tax above skiktgräns. sal = salary, other = dividends taxed as income.
 function personalTax(sal, other=0){
   const gross = sal + other;
   if (gross<=0) return 0;
-  const muni = P.muni.v/100 * Math.max(0, gross - P.grundavdrag.v);
-  const credit = Math.min(P.jobbavdrag.v, P.muni.v/100 * Math.max(0, sal - P.grundavdrag.v));
-  return muni - credit + P.stateRate.v/100 * Math.max(0, gross - P.brytpunkt.v);
+  const pbb = P.pbb.v, ki = P.muni.v/100, f = gross/pbb;
+  let ga = f<=0.99 ? 0.423*pbb : f<=2.72 ? 0.423*pbb + 0.2*(gross-0.99*pbb) : f<=3.11 ? 0.77*pbb : f<=7.88 ? 0.77*pbb - 0.1*(gross-3.11*pbb) : 0.293*pbb;
+  ga = Math.min(ga, gross);
+  const taxable = gross - ga;
+  const kommunal = taxable*ki;
+  const a = sal/pbb;
+  let jsa = a<=0.91 ? (sal-ga)*ki : a<=3.24 ? (0.91*pbb + 0.3874*(sal-0.91*pbb) - ga)*ki : a<=8.08 ? (1.813*pbb + 0.251*(sal-3.24*pbb) - ga)*ki : (3.027*pbb - ga)*ki;
+  jsa = Math.min(Math.max(0,jsa), kommunal);
+  const fi = taxable<=40000 ? 0 : taxable<=240000 ? 0.0075*(taxable-40000) : 1500;
+  const state = P.stateRate.v/100 * Math.max(0, taxable - P.skikt.v);
+  return Math.max(0, kommunal - jsa - fi) + state;
 }
+// Non-cash value of salary: pension rights (18.5% of PGI) and sickness/parental cover, up to the 8.07 IBB ceiling.
+const pensionValue = sal => Math.min(sal, 8.07*P.ibb.v) * P.pensionVal.v/100;
 
 // One year: each of n owners takes salary `sal`; max in-room dividend, then `over` above-room dividend (limited by cash), split between owners.
 function year(st, sal, over, profit, label){
@@ -125,7 +139,7 @@ function year(st, sal, over, profit, label){
   const divOver = Math.min(over, free - divIn);
   st.cash -= divIn + divOver; st.room -= divIn;
   const perOver = divOver/n, asIncome = Math.min(perOver, P.overCap.v), asCapital = perOver - asIncome;
-  const net = n*(sal + asIncome - personalTax(sal, asIncome) + asCapital*(1-P.capTax.v/100)) + divIn*(1-P.divTax.v/100);
+  const net = n*(sal + asIncome - personalTax(sal, asIncome) + asCapital*(1-P.capTax.v/100) + pensionValue(sal)) + divIn*(1-P.divTax.v/100);
   st.net += net;
   st.bank = st.bank*g() + net; st.t++;
   st.rows.push({label, sal, divIn, divOver, corpTax, fundDelta:alloc-rev, cashEnd:st.cash, net, bank:st.bank, t:st.t});
