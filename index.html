@@ -49,10 +49,8 @@
   <details><summary>Tax parameters (2026, Värmdö)</summary><div class="params" id="params"></div></details>
 </div>
 
-<div class="card"><div id="headline"></div></div>
-
 <div class="card">
-  <h2>Plan comparison</h2>
+  <h2>Plans (best first)</h2>
   <div id="detail"></div>
   <details><summary>Model notes</summary>
     <ul>
@@ -164,11 +162,11 @@ function render(){
   const cap = P.brytpunkt.v;
   const maxS = Math.max(I.minSal, I.profit/ag());
   const step = Math.max(10000, Math.round(maxS/30/10000)*10000);
-  const pts=[]; let best=null;
+  let best=null;
   const Ss = new Set([I.minSal, Math.min(cap,maxS), maxS]);
   for (let S=I.minSal; S<=maxS; S+=step) Ss.add(S);
   for (const S of [...Ss].sort((a,b)=>a-b)){
-    const b = bestFuture(S,I); pts.push([S,b.net]);
+    const b = bestFuture(S,I);
     if (!best || b.net>best.net) best={S,...b};
   }
   // refine around best
@@ -177,20 +175,15 @@ function render(){
   }
   const capS = Math.min(cap,maxS);
   const bestR = run(best.S,best.F,best.G,I), capR = run(capS,cap,Infinity,I); // naive: cap salary + all dividends every year
-  const d = bestR.net - capR.net;
-  const near = pts.filter(p=>p[1]>=bestR.net-5000).map(p=>p[0]);
   const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
   const dormR = bestOf(runDormant, I);
-  const alts = [["Keep company, optimal plan above", bestR.net],["Dissolve right after the last profitable year", nowR.net],["Dormant 4 years, then liquidate at 25%", dormR.net]];
-  headline.innerHTML = `
-    <div class="big">Take ${fmt(best.S)} kr salary per profitable year → total ${fmt(bestR.net)} kr in your pocket</div>
-    <div>Plus dividends within room each profitable year: ${fmt(bestR.rows[0].divIn)} kr. ${I.years>0?`Payout years: ${fmt(best.F)} kr salary + dividends (${fmt(best.G)} kr/yr above room, plus whatever room allows).`:""}</div>
-    <div>Naive plan — cap salary (660,400) every year, dividend room, and everything else as dividend income right away: ${fmt(capR.net)} kr → optimum is <span class="${d>0?'pos':''}">${d>0?'+':''}${fmt(d)} kr</span> better.</div>
-    <div class="note">Any salary between ${fmt(Math.min(...near))} and ${fmt(Math.max(...near))} in the profitable years is within 5,000 kr of the optimum.</div>
-    <h2 style="margin-top:12px">Retiring? Keep vs dissolve</h2>
-    <table>${alts.map(([l,n])=>`<tr><td>${l}</td><td>${fmt(n)}</td><td class="${n-bestR.net>=0?'pos':'neg'}">${n-bestR.net>=0?'+':''}${fmt(n-bestR.net)}</td></tr>`).join("")}</table>`;
-  detail.innerHTML = table(`Optimal plan (salary ${fmt(best.S)} per profitable year)`, bestR) + table(`Naive plan (cap salary + all dividends every year)`, capR)
-    + table(`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR) + table(`Dormant then liquidate (salary ${fmt(dormR.rows[0].sal)})`, dormR);
+  const plans = [
+    [`Optimal: ${fmt(best.S)} salary per profitable year${I.years>0?`, ${fmt(best.F)} in payout years`:""}`, bestR],
+    [`Naive: cap salary + all dividends every year`, capR],
+    [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
+    [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
+  ];
+  detail.innerHTML = plans.map(([t,r])=>{ const dd=r.net-bestR.net; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.net)} kr${dd<0?` (${fmt(dd)})`:""}</span>`, r); }).join("");
 }
 
 function table(title, r){
