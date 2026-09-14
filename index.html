@@ -126,10 +126,10 @@ function finish(st, H){
   return st;
 }
 
-// Plan: salary S in each profitable year; each payout year salary F + above-room dividend G; leftover dumped in an extra year.
+// Plan: salary S in each profitable year, F in each payout year; above-room dividend G every year; leftover dumped in an extra year.
 function run(S, F, G, I){
   const st = {cash:0, fund:0, room:I.room0, net:0, bank:0, t:0, rows:[]};
-  for (let k=1;k<=I.pyears;k++) year(st, S, 0, I.profit, "Profit year "+k);
+  for (let k=1;k<=I.pyears;k++) year(st, S, G, I.profit, "Profit year "+k);
   for (let k=1;k<=I.years && st.cash>1;k++) year(st, Math.min(F, st.cash/ag()), G, 0, "Payout year "+k);
   if (st.cash>1){ // final clean-out: reverse fund, tax it, pay out everything with no salary
     const endTax = st.fund*P.corp.v/100; st.cash -= endTax; st.fund = 0;
@@ -191,7 +191,7 @@ function render(){
   const nowR = bestOf((S,I)=>run(S,0,0,{...I,years:0}), I);
   const dormR = bestOf(runDormant, I);
   const plans = [
-    [`Optimal: ${fmt(best.S)} salary per profitable year${I.years>0?`, ${fmt(best.F)} in payout years`:""}`, bestR],
+    [`Optimal: ${fmt(best.S)} salary per profitable year${I.years>0?`, ${fmt(best.F)} in payout years`:""}${best.G>0?`, ${fmt(best.G)}/yr dividend as income`:""}`, bestR],
     [`Naive: cap salary + all dividends every year`, capR],
     [`Dissolve after last profitable year (salary ${fmt(nowR.rows[0].sal)})`, nowR],
     [`Dormant 4 years, then liquidate at 25% (salary ${fmt(dormR.rows[0].sal)})`, dormR],
