@@ -56,6 +56,12 @@
 </div>
 
 <div class="card">
+  <h2>What 1 kr of company money becomes (per-krona ladder)</h2>
+  <div class="note">Marginal value of one more krona of pre-tax company profit, by route. Recomputed from the parameters above (incl. the pension/SGI value on salary below 8.07 IBB). Cheapest routes first — fill them top-down each year.</div>
+  <div id="ladder"></div>
+</div>
+
+<div class="card">
   <h2>Plans (best first)</h2>
   <div id="detail"></div>
   <details><summary>Model notes</summary>
@@ -230,6 +236,37 @@ function render(){
     plans.map(([t,r])=>{ const dd=r.val-bestR.val; return table(`${t} → <span class="${dd<0?'neg':'pos'}">${fmt(r.val)} kr${dd<0?` (${fmt(dd)})`:""}</span> <span class="note">— ${fmt(r.net)} kr nominal, ${r.t} years</span>`, r); }).join("");
 }
 
+// Per-krona ladder: marginal value of 1 kr of pre-tax company profit by route, from current parameters.
+function ladderRows(){
+  const mt = S => (personalTax(S+500) - personalTax(S-500))/1000;         // marginal tax on salary at S
+  const mtd = D => (personalTax(0, D+500) - personalTax(0, D-500))/1000;  // marginal tax on income-dividend at D
+  const pv = S => S < 8.07*P.ibb.v ? P.pensionVal.v/100 : 0;
+  const salRow = S => (1 - mt(S) + pv(S)) / ag();
+  const corp = 1 - P.corp.v/100;
+  const roomKeep = 1 - P.divTax.v/100;
+  // salary above cap: cash + 0.5 kr/kr of next-year 20% room; room's value depends on what tax it displaces
+  const overCash = (1 - mt(P.brytpunkt.v + 50000)) / ag(), roomKr = P.loneAndel.v/100 / ag();
+  const roomVal = r => roomKr * (r - P.divTax.v/100);
+  return [
+    ["Salary up to ~192k (before jobbskatteavdrag knee 1)", salRow(150000), "employer contributions only; income tax near zero; full pension/SGI"],
+    ["Salary ~192k–480k", salRow(350000), "jobbskatteavdrag still growing; marginal ~23%"],
+    ["Salary ~480k–660k (up to brytpunkt)", salRow(570000), "marginal ~31%; the classic \u201ccap salary\u201d slice — pension rights are what keep it competitive"],
+    ["Dividend within room (20%)", corp*roomKeep, "corporate tax 20.6%, then 20%; room = 322,400/yr + saved"],
+    ["Tjänstepension premium (paid out at ~31%)", (1/1.2426)*(1-0.31), "deductible, 24.26% löneskatt; wrapper taxed ~0.5pp/yr less than ISK/KF — improves with horizon; locked until 55+ (not in optimizer)"],
+    ["Retain → dormant 4 yrs → liquidate at 25%", corp*(1-P.liqTax.v/100), "the standard retirement endgame"],
+    ["Retain → dividend as income, under brytpunkt", corp*(1-mtd(400000)), "~31% municipal; no pension rights"],
+    ["Retain → dividend as capital above 90 IBB (30%)", corp*(1-P.capTax.v/100), "only in a single huge payout year (>7.25M over room)"],
+    [`Salary above 660k incl. the 0.5 kr/kr room it creates`, null,
+      `${overCash.toFixed(2)} cash (51% tax + agavg, no pension above 673k) + ${roomKr.toFixed(2)} kr of 20% room next year, worth ${roomVal(0.25).toFixed(2)}\u2013${roomVal(mtd(P.brytpunkt.v+1e5)).toFixed(2)} depending on what it displaces → total ${(overCash+roomVal(0.25)).toFixed(2)}\u2013${(overCash+roomVal(mtd(P.brytpunkt.v+1e5))).toFixed(2)}`],
+    ["Retain → dividend as income, above brytpunkt", corp*(1-mtd(P.brytpunkt.v+100000)), "51% — the slice every other route exists to avoid"],
+  ];
+}
+function renderLadder(){
+  const rows = ladderRows().sort((a,b)=>(b[1]??0.42)-(a[1]??0.42));
+  document.getElementById("ladder").innerHTML = `<table><tr><th>Route for 1 kr of profit</th><th>You keep</th><th style="text-align:left">Notes</th></tr>` +
+    rows.map(([label,keep,note])=>`<tr><td>${label}</td><td>${keep==null?"—":keep.toFixed(2)}</td><td style="text-align:left" class="note">${note}</td></tr>`).join("") + `</table>`;
+}
+
 function table(title, r){
   return `<h2>${title}</h2><table><tr><th>Year</th><th>Salary${r.n>1?" (each)":""}</th><th>Dividend (20%)</th><th>Dividend (as income)</th><th>Corp. tax</th><th>Deferral fund ±</th><th>Cash left in company</th><th>Net to you${r.n>1?" both":""}, today's kr (sum for grouped years)</th><th>Cumulative</th></tr>` +
     collapse(r.rows).map(y=>`<tr><td>${y.label}</td><td>${fmt(y.sal)}</td><td>${fmt(y.divIn)}</td><td>${fmt(y.divOver)}</td><td>${fmt(y.corpTax)}</td><td>${fmt(y.fundDelta)}</td><td>${fmt(y.cashEnd)}</td><td>${fmt(y.netPV)}</td><td>${fmt(y.cumPV)}</td></tr>`).join("") +
@@ -256,8 +293,8 @@ params.innerHTML = Object.entries(P).map(([k,p])=>
   `<label>${p.l} <input type="number" step="any" value="${p.v}" data-k="${k}"></label>`).join("");
 params.addEventListener("input", e=>{ P[e.target.dataset.k].v=+e.target.value||0; schedule(); });
 let pending=false;
-function schedule(){ if(pending) return; pending=true; requestAnimationFrame(()=>{ pending=false; render(); }); }
-render();
+function schedule(){ if(pending) return; pending=true; requestAnimationFrame(()=>{ pending=false; render(); renderLadder(); }); }
+render(); renderLadder();
 </script>
 </body>
 </html>

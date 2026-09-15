@@ -5,7 +5,7 @@ import { test, expect, beforeEach } from "bun:test";
 
 const html = await Bun.file(new URL("./index.html", import.meta.url)).text();
 const src = html.match(/<script>([\s\S]*)<\/script>/)[1].split("for (const id of")[0];
-const M = new Function(src + "\nreturn {P, personalTax, pensionValue, year, fresh, finish, run, runDormant, bestFuture, bestOf, g, ag};")();
+const M = new Function(src + "\nreturn {P, personalTax, pensionValue, year, fresh, finish, run, runDormant, bestFuture, bestOf, ladderRows, g, ag};")();
 const { P } = M;
 const defaults = JSON.parse(JSON.stringify(P));
 beforeEach(() => { for (const k in defaults) P[k].v = defaults[k].v; });
@@ -165,6 +165,15 @@ test("dormant plan: no salary during 4 years, in-room dividends only, then 25% o
   const liq = r.rows.at(-1);
   expect(liq.label).toMatch(/Liquidation/);
   near(liq.net, r.rows.at(-2).cashEnd * (1 - P.liqTax.v / 100) - liq.corpTax * 0.75, 1);
+});
+
+test("per-krona ladder: sane, ordered extremes, matches closed forms", () => {
+  const rows = M.ladderRows();
+  for (const [, keep] of rows) if (keep != null) { expect(keep).toBeGreaterThan(0.3); expect(keep).toBeLessThan(0.8); }
+  const by = s => rows.find(r => r[0].includes(s))[1];
+  near(by("within room"), (1 - 0.206) * 0.8, 1e-9);
+  near(by("dormant"), (1 - 0.206) * 0.75, 1e-9);
+  expect(by("up to ~192k")).toBeGreaterThan(by("above brytpunkt"));
 });
 test("optimizer never returns a plan worse than the naive cap plan", () => {
   for (const o of [{}, { pyears: 5, years: 10 }, { owners: 2 }, { profit: 8e6, years: 20 }]) {
